@@ -1,0 +1,217 @@
+---
+title: "Prescription Relay R Notebook"
+name: "Callie Frantz"
+date: "December 2020"
+output: html_notebook
+---
+
+Creating File Directory(local)
+```{r}
+#Create file repository for .csv data in working directory
+dir.create("Prescriptions")
+
+```
+
+Medication Name Data Set
+```{r}
+library(dplyr)
+library(stringr)
+
+#read in dental medication data set from supplied .csv file saved in working directory pres_dent_eng_2014_apx2.csv is the data set
+
+scriptData <- read.csv("C:\\Users\\crenn\\Desktop\\BME 577 BMI\\Project\\pres_dent_eng_2014_apx2.csv")
+
+medication <- pull(scriptData, DRUG_NAME) %>% word(1,sep = "_") %>% unique()
+
+```
+
+
+ 
+Shiny Application: Input into prescription form, save .pdf files as .csv
+```{r}
+library(shiny)
+library(DT)
+library(dplyr)
+library(shinyjs)
+library(pdftools)
+library(stringr)
+
+#Columns for data pulled from the prescription input form and the file path to save .csv
+fieldsAll <- c("Status", "Patient Name", "Date of Birth","Address", "Medication Name", "Strength", "Unit", "Quantity", "Dose", "Route",  "Frequency", "Refill", "Indication", "Direction", "Provider")
+responseDir <- file.path("Prescriptions")
+epochTime <- function() {
+  as.integer(Sys.time())
+}
+humanTime <- function() format(Sys.time(), "%Y%m%d-%H%M%OS")
+
+#Load data from .csv files in the responseDir, or working directory file
+loadData <- function(){
+  files <- list.files(file.path(responseDir), full.names = TRUE)
+  data <- lapply(files, read.csv, stringsAsFactors = FALSE)
+  data <- dplyr::bind_rows(data)
+  data
+}
+
+#Function to save .csv file for each individual prescription
+saveData <- function(data){
+  fileName <- sprintf("%s_%s.csv",
+                      humanTime(),
+                      digest::digest(data))
+  write.csv(x = data, file = file.path(responseDir, fileName),
+  row.names = FALSE, quote = TRUE)
+}
+
+#File path for .pdf data, create a file path
+fileVector <- list.files(path = "PDF Prescriptions")
+
+#Pulls each .pdf file from a local folder in the file directory (PDF Prescriptions) mock prescription format is provided
+for(i in 1:length(fileVector)){
+  
+textFile <- pdf_text(paste("PDF Prescriptions",fileVector[i],sep = "/")) %>% str_split(pattern = "\r\n") %>% unlist() %>% str_split(pattern = ":")
+n = length(textFile)
+
+if(textFile[[n]] == ""){
+  textFile[[n]] <- NULL
+}
+  
+scriptData <- as.data.frame(textFile, row.names = NULL) 
+
+colnames(scriptData) <- scriptData[1,]
+scriptData <- scriptData[-1,]
+rownames(scriptData) = NULL
+
+#creating a .csv file with the .pdf data, saving it to the same directory as manual input
+write.csv(scriptData, file = file.path("Prescriptions", sprintf("%s_%s.csv", humanTime(), digest::digest(scriptData))))
+}
+
+#The Shiny Application UI
+shinyApp(
+ui <- navbarPage( "Prescription App",
+
+ tabPanel("Prescription Form",
+                div( id = "form",
+ 
+        titlePanel("Prescription Form"), 
+     
+        fluidRow(
+   
+          column(6,
+           wellPanel(
+             radioButtons(inputId = "Status", label = "Status", choices = c("Open", "Filled"), inline = TRUE),
+             fluidRow(
+              column(8,
+              textInput(inputId = "Patient Name", label = "Patient Name"),
+               ),
+              column(4,
+              textInput(inputId = "Date of Birth", label = "Date of Birth"),
+               ),
+             ),
+              textInput(inputId = "Address", label = "Address"),
+              selectizeInput(inputId = "Medication Name", label = "Medication Name", choices = medication),
+      
+             fluidRow(
+              column(6,
+               textInput(inputId = "Strength", label = "Strength"),
+               ),
+              column(6,
+              selectInput(inputId = "Unit", label = "Unit", choices = c("MILLIgrams","MICROgrams", "Percent") ),
+              ),
+              textInput(inputId = "Quantity", label = "Quantity"),       
+            ),
+              radioButtons(inputId = "Dose", label = "Dose", inline = TRUE, choices = c("One Tab","Two Tabs", "Puff(s)", "Units") ),
+        
+            fluidRow(
+              column(4,
+              radioButtons("Route", label = "Route", choices = c("Oral", "Topical", "Inhaled", "Rectal")),
+              ),
+              column(4,
+              radioButtons("Frequency", "Frequency", choices = c("Daily", "BID", "TID", "QID")),
+              ),
+              column(4,
+               radioButtons("Refill", label = "Refill", choices = c("0", "1", "2", "3")),
+               ), 
+            ),
+              textInput(inputId = "Indication", label = "Indication"),
+  
+             textInput(inputId = "Direction", label = "Additional Directions"),
+                     
+              selectInput(inputId = "Provider", label = "Prescriber", choices = c("New Prescriber","A", "B", "C", "D", "E", "F", "G") ),
+  
+              actionButton("submit", "Submit", class = "btn-primary"),
+            )
+         ),
+       ),
+    ),
+
+#Creating a "thank you" message that only appears on submission
+  useShinyjs(),
+    hidden(
+      div(
+        id = "script_submit",
+        h3("Thank you, the prescription has been submitted successfully."),
+        actionLink("submit_another", "Submit Another Prescription")
+      )
+    ),
+          ),
+#Resoponse Table output 
+ tabPanel("Table",
+          DT::dataTableOutput("responseTable"),
+          value = "Table")
+                  
+
+),
+server <- function(input,output) {
+  
+  formData <- reactive({
+    data <-sapply(fieldsAll, function(x) input[[x]])
+    data <- c(data, timestamp = epochTime())
+    data <- t(data)
+    data
+  })
+ saveData <- function(data){
+   fileName <- sprintf("%s_%s.csv",
+                       humanTime(),
+                       digest::digest(data))
+   write.csv(x = data, file = file.path(responseDir, fileName), row.names = FALSE, quote = TRUE)
+ }
+ 
+ observeEvent(input$submit, {
+   saveData(formData())
+ })
+ 
+  observeEvent(input$submit, {
+   saveData(formData())
+   shinyjs::reset("form")
+   shinyjs::hide("form")
+   shinyjs::show("script_submit")
+ })
+ 
+ observeEvent(input$submit_another,{
+   show("form")
+   hide("script_submit")
+ })
+ 
+ output$responseTable <- DT::renderDataTable(
+   loadData(),
+   rownames = FALSE,
+   editable = TRUE,
+   options = list(searching = FALSE, lengthChange = FALSE)
+ )
+   
+ 
+
+ 
+}
+)
+shinyApp(ui = ui, server = server)
+
+```
+textFile <- pdf_text("PDF Prescriptions/prescription_list.pdf") %>% str_split(pattern = "\r\n") %>% unlist() %>% str_split(pattern = ":")
+n = length(textFile)
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
